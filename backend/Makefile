@@ -1,4 +1,4 @@
-.PHONY: migrate-up migrate-down sqlc run-api run-worker build tidy
+.PHONY: migrate-up migrate-down sqlc sqlc-generate run-api run-worker build tidy seed-platform-admin
 
 DATABASE_URL ?= postgres://postgres:Admin123@localhost:5432/wa_dashboard?sslmode=disable
 MIGRATIONS_PATH ?= db/migrations
@@ -11,6 +11,11 @@ migrate-down:
 
 sqlc:
 	sqlc generate
+
+sqlc-generate: sqlc
+
+seed-platform-admin:
+	go run ./cmd/seed-platform-admin
 
 run-api:
 	go run ./cmd/api

@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type DBTX interface {
@@ -27,9 +26,7 @@ type Queries struct {
 }
 
 func (q *Queries) WithTx(tx pgx.Tx) *Queries {
-	return &Queries{db: tx}
-}
-
-func NewFromPool(pool *pgxpool.Pool) *Queries {
-	return New(pool)
+	return &Queries{
+		db: tx,
+	}
 }

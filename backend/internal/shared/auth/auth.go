@@ -14,10 +14,13 @@ import (
 type Role string
 
 const (
-	RoleAdmin      Role = "admin"
-	RoleSupervisor Role = "supervisor"
-	RoleAgent      Role = "agent"
+	RoleAdmin         Role = "admin"
+	RoleSupervisor    Role = "supervisor"
+	RoleAgent         Role = "agent"
+	RolePlatformAdmin Role = "platform_admin"
 )
+
+const platformAdminRole = string(RolePlatformAdmin)
 
 type RequestContext struct {
 	UserID   uuid.UUID
@@ -25,11 +28,22 @@ type RequestContext struct {
 	Roles    []string
 }
 
+type AdminRequestContext struct {
+	PlatformAdminID uuid.UUID
+	Role            string
+}
+
 type ctxKey struct{}
+type adminCtxKey struct{}
 
 type Claims struct {
 	TID   string   `json:"tid"`
 	Roles []string `json:"roles"`
+	jwt.RegisteredClaims
+}
+
+type AdminClaims struct {
+	Role string `json:"role"`
 	jwt.RegisteredClaims
 }
 
@@ -55,6 +69,44 @@ func (s *TokenService) IssueAccessToken(userID, tenantID uuid.UUID, roles []stri
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(s.secret)
+}
+
+func (s *TokenService) IssueAdminToken(platformAdminID uuid.UUID) (string, error) {
+	now := time.Now().UTC()
+	claims := AdminClaims{
+		Role: platformAdminRole,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   platformAdminID.String(),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(s.secret)
+}
+
+func (s *TokenService) ParseAdminToken(tokenString string) (*AdminRequestContext, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &AdminClaims{}, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, apperrors.Unauthorized("invalid token")
+		}
+		return s.secret, nil
+	})
+	if err != nil {
+		return nil, apperrors.Unauthorized("invalid or expired token")
+	}
+	claims, ok := token.Claims.(*AdminClaims)
+	if !ok || !token.Valid || claims.Role != platformAdminRole {
+		return nil, apperrors.Unauthorized("invalid token")
+	}
+	adminID, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return nil, apperrors.Unauthorized("invalid token")
+	}
+	return &AdminRequestContext{
+		PlatformAdminID: adminID,
+		Role:            claims.Role,
+	}, nil
 }
 
 func (s *TokenService) ParseAccessToken(tokenString string) (*RequestContext, error) {
@@ -95,6 +147,15 @@ func RequestContextFrom(ctx context.Context) (*RequestContext, bool) {
 	return rc, ok
 }
 
+func WithAdminRequestContext(ctx context.Context, rc *AdminRequestContext) context.Context {
+	return context.WithValue(ctx, adminCtxKey{}, rc)
+}
+
+func AdminRequestContextFrom(ctx context.Context) (*AdminRequestContext, bool) {
+	rc, ok := ctx.Value(adminCtxKey{}).(*AdminRequestContext)
+	return rc, ok
+}
+
 func RequireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		rc, ok := c.Get("request_context").(*RequestContext)
@@ -118,6 +179,12 @@ func JWTAuth(tokens *TokenService) echo.MiddlewareFunc {
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 				return apperrors.Unauthorized("invalid authorization header")
 			}
+			if ac, err := tokens.ParseAdminToken(parts[1]); err == nil {
+				c.Set("admin_context", ac)
+				ctx := WithAdminRequestContext(c.Request().Context(), ac)
+				c.SetRequest(c.Request().WithContext(ctx))
+				return next(c)
+			}
 			rc, err := tokens.ParseAccessToken(parts[1])
 			if err != nil {
 				return err
@@ -127,6 +194,39 @@ func JWTAuth(tokens *TokenService) echo.MiddlewareFunc {
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
+	}
+}
+
+type TenantStatusLookup func(ctx context.Context, tenantID uuid.UUID) (string, error)
+
+func TenantActiveGuard(lookup TenantStatusLookup) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			rc, ok := c.Get("request_context").(*RequestContext)
+			if !ok || rc == nil || lookup == nil {
+				return next(c)
+			}
+			status, err := lookup(c.Request().Context(), rc.TenantID)
+			if err != nil {
+				return err
+			}
+			if status == "suspended" {
+				return apperrors.TenantSuspended("")
+			}
+			return next(c)
+		}
+	}
+}
+
+func RequirePlatformAdmin(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		ac, ok := c.Get("admin_context").(*AdminRequestContext)
+		if !ok || ac == nil || ac.Role != platformAdminRole {
+			return apperrors.Unauthorized("")
+		}
+		ctx := WithAdminRequestContext(c.Request().Context(), ac)
+		c.SetRequest(c.Request().WithContext(ctx))
+		return next(c)
 	}
 }
 

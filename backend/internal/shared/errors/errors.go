@@ -46,6 +46,13 @@ func Forbidden(message string) *AppError {
 	return New(message, http.StatusForbidden, "FORBIDDEN")
 }
 
+func TenantSuspended(message string) *AppError {
+	if message == "" {
+		message = "Tenant is suspended"
+	}
+	return New(message, http.StatusForbidden, "TENANT_SUSPENDED")
+}
+
 func NotFound(message string) *AppError {
 	if message == "" {
 		message = "Resource not found"

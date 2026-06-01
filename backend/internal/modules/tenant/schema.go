@@ -87,6 +87,7 @@ type TenantDTO struct {
 	ID        uuid.UUID `json:"id"`
 	Name      string    `json:"name"`
 	Slug      string    `json:"slug"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -96,6 +97,7 @@ func TenantFromRow(t sqlc.Tenant) TenantDTO {
 		ID:        t.ID,
 		Name:      t.Name,
 		Slug:      t.Slug,
+		Status:    t.Status,
 		CreatedAt: t.CreatedAt.UTC(),
 		UpdatedAt: t.UpdatedAt.UTC(),
 	}

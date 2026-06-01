@@ -40,10 +40,36 @@
 }
 ```
 
-- **Roles (RBAC):** `admin`, `supervisor`, `agent`.
+- **Roles (RBAC):** `admin`, `supervisor`, `agent` (tenant-scoped JWT with `tid`).
   - `admin` — full access, manage tenant + members.
   - `supervisor` — view all conversations, manage broadcasts, view members.
   - `agent` — handle assigned conversations only.
+- **Platform operator JWT** (no `tid`): `role` is `platform_admin`. Used only on
+  `/admin/*` endpoints. Tenant tokens must not be accepted on admin routes, and
+  admin tokens must not grant tenant-scoped access.
+
+```json
+{
+  "sub": "9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+  "role": "platform_admin",
+  "iat": 1748707200,
+  "exp": 1748708100
+}
+```
+- **Platform admin access token claims (informative):** super admins (platform
+  operators) live outside any tenant, so their access token has **no `tid`
+  claim** and a fixed `role` of `platform_admin`. A token without `tid` is
+  rejected on tenant-scoped endpoints, and a tenant token (with `tid`) is
+  rejected on `/admin/*` endpoints — the two token kinds are not interchangeable.
+
+```json
+{
+  "sub": "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d",  // platform admin id
+  "role": "platform_admin",                         // fixed; no other roles
+  "iat": 1748707200,
+  "exp": 1748708100                                 // short-lived (e.g. 15 min)
+}
+```
 - The **refresh token** is an opaque string persisted server-side; clients call
   `POST /auth/refresh` to rotate it for a new access/refresh pair. Refresh tokens
   are revoked on `POST /auth/logout`.
@@ -65,6 +91,8 @@
 | ----------- | -------------- | ---------------------------------------------------- |
 | 401         | `UNAUTHORIZED` | Missing/invalid/expired access token.                |
 | 403         | `FORBIDDEN`    | Authenticated but lacks the required role/permission.|
+| 403         | `TENANT_SUSPENDED` | Tenant is suspended; tenant-scoped requests are blocked. |
+| 403         | `TENANT_SUSPENDED` | The caller's tenant is `suspended`; authentication/API access is blocked until it is reactivated. |
 | 404         | `NOT_FOUND`    | Resource does not exist (or not in caller's tenant). |
 | 409         | `CONFLICT`     | Conflict, e.g. email already registered.             |
 | 422         | `VALIDATION`   | Request body/params failed validation.               |
@@ -136,6 +164,7 @@ These are the canonical object shapes. Endpoints below reference them by name.
 {
   "id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
   "business_name": "Acme Inc.",
+  "status": "active",
   "settings": {},
   "ai_enabled": false,
   "features": {
@@ -152,6 +181,7 @@ These are the canonical object shapes. Endpoints below reference them by name.
 | --------------- | ------- | ------------------------------------------------------ |
 | `id`            | string  | UUID                                                   |
 | `business_name` | string  |                                                        |
+| `status`        | string  | `active` \| `suspended` (default `active`)             |
 | `settings`      | object  | free-form per-tenant settings (default `{}`)           |
 | `ai_enabled`    | boolean | tenant-level AI master switch                          |
 | `features`      | object  | feature flags (see below)                              |
@@ -165,6 +195,27 @@ These are the canonical object shapes. Endpoints below reference them by name.
 | `cs_inbox`   | boolean |
 | `analytics`  | boolean |
 | `ai_chatbot` | boolean |
+
+### PlatformAdmin
+
+A platform operator (super admin). Lives **outside** the tenant model and is not
+a [User](#user); it can provision and manage tenants but never belongs to one.
+
+```json
+{
+  "id": "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d",
+  "email": "ops@wa-dashboard.com",
+  "full_name": "Platform Operator",
+  "created_at": "2026-05-31T16:15:00Z"
+}
+```
+
+| Field        | Type   | Notes        |
+| ------------ | ------ | ------------ |
+| `id`         | string | UUID         |
+| `email`      | string | unique       |
+| `full_name`  | string |              |
+| `created_at` | string | ISO-8601 UTC |
 
 ### Broadcast
 
@@ -216,7 +267,9 @@ These are the canonical object shapes. Endpoints below reference them by name.
 
 ### POST /auth/register
 
-Creates a new tenant and its initial **admin** user. Public.
+Creates a new tenant and its initial **admin** user. Public when enabled via
+`PUBLIC_REGISTRATION_ENABLED` (default `false`). When disabled, returns
+`403 FORBIDDEN`.
 
 Request:
 
@@ -240,7 +293,11 @@ Request:
 }
 ```
 
-Errors: `422 VALIDATION`, `409 CONFLICT` (email already registered).
+Errors: `422 VALIDATION`, `403 FORBIDDEN` (registration disabled),
+`409 CONFLICT` (email already registered).
+
+Tenant-scoped requests for a **suspended** tenant return `403` with code
+`TENANT_SUSPENDED` (see error envelope).
 
 ### POST /auth/login
 
@@ -320,6 +377,113 @@ Returns the current user and tenant. **Auth required.**
 ```
 
 Errors: `401 UNAUTHORIZED`.
+
+---
+
+## Platform Admin
+
+Platform operators manage tenants across the whole platform. These endpoints use
+a **separate token kind** (see [Platform admin access token claims](#authentication--multi-tenancy)):
+the access token has `role: "platform_admin"` and **no `tid`**. All endpoints
+except login require `Authorization: Bearer <access_token>` issued for a platform
+admin; a normal tenant token is rejected with `403 FORBIDDEN`.
+
+### POST /admin/auth/login
+
+Authenticates a platform admin. Public.
+
+Request:
+
+```json
+{
+  "email": "ops@wa-dashboard.com",
+  "password": "s3cr3tpassword"
+}
+```
+
+`200 OK`:
+
+```json
+{
+  "admin": { /* PlatformAdmin */ },
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "rt_4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c"
+}
+```
+
+Errors: `422 VALIDATION`, `401 UNAUTHORIZED` (bad credentials).
+
+### GET /admin/tenants
+
+Lists all tenants across the platform. Paginated. **Platform admin only.**
+
+Query params: `limit`, `offset`.
+
+`200 OK`:
+
+```json
+{
+  "data": [ /* array of Tenant */ ],
+  "page": { "limit": 20, "offset": 0, "total": 137 }
+}
+```
+
+Errors: `401 UNAUTHORIZED`, `403 FORBIDDEN`.
+
+### POST /admin/tenants
+
+Provisions a new tenant **and** its initial owner (`admin`) user in one call.
+**Platform admin only.**
+
+Request:
+
+```json
+{
+  "business_name": "Acme Inc.",
+  "owner_email": "owner@acme.com",
+  "owner_full_name": "Jane Doe",
+  "owner_password": "s3cr3tpassword"
+}
+```
+
+`201 Created`:
+
+```json
+{
+  "tenant": { /* Tenant */ },
+  "owner": { /* User */ }
+}
+```
+
+Errors: `422 VALIDATION`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `409 CONFLICT`
+(business name / owner email already registered).
+
+### GET /admin/tenants/:id
+
+Returns a single tenant by id. **Platform admin only.**
+
+`200 OK`: a [Tenant](#tenant) object.
+
+Errors: `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 NOT_FOUND`.
+
+### PATCH /admin/tenants/:id
+
+Updates a tenant's `status` to suspend or reactivate it. While a tenant is
+`suspended`, its users are blocked with `403 TENANT_SUSPENDED`. **Platform admin only.**
+
+Request:
+
+```json
+{
+  "status": "suspended"
+}
+```
+
+`status` must be one of `active` | `suspended`.
+
+`200 OK`: the updated [Tenant](#tenant) object.
+
+Errors: `422 VALIDATION`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 NOT_FOUND`.
 
 ---
 

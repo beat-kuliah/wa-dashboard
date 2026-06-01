@@ -5,3 +5,8 @@ export { GuestGuard } from "./components/GuestGuard";
 export { LoginForm } from "./components/LoginForm";
 export { loginFormSchema, type LoginFormValues } from "./model/schema";
 export { useAuthStore } from "./model/store";
+export {
+  userHasRole,
+  isTenantAdmin,
+  canViewTenantMembers,
+} from "./model/roles";

@@ -13,10 +13,10 @@ type Module struct {
 	Service *Service
 }
 
-func NewModule(pool *pgxpool.Pool, tokens *auth.TokenService, refreshTTL time.Duration, accessExpiry int) *Module {
+func NewModule(pool *pgxpool.Pool, tokens *auth.TokenService, refreshTTL time.Duration, accessExpiry int, publicRegistrationEnabled bool) *Module {
 	repo := NewRepository(pool)
 	svc := NewService(repo, tokens, refreshTTL, accessExpiry)
-	handler := NewHandler(svc)
+	handler := NewHandler(svc, publicRegistrationEnabled)
 	return &Module{Handler: handler, Service: svc}
 }
 

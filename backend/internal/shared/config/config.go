@@ -18,7 +18,11 @@ type Config struct {
 	JWTAccessTTL     time.Duration `env:"JWT_ACCESS_TTL" envDefault:"15m"`
 	RefreshTokenTTL  time.Duration `env:"REFRESH_TOKEN_TTL" envDefault:"720h"`
 	MigrationsPath   string        `env:"MIGRATIONS_PATH" envDefault:"db/migrations"`
-	Environment      string        `env:"ENVIRONMENT" envDefault:"development"`
+	Environment                 string `env:"ENVIRONMENT" envDefault:"development"`
+	PublicRegistrationEnabled   bool   `env:"PUBLIC_REGISTRATION_ENABLED" envDefault:"false"`
+	PlatformAdminSeedEmail      string `env:"PLATFORM_ADMIN_EMAIL"`
+	PlatformAdminSeedPassword   string `env:"PLATFORM_ADMIN_PASSWORD"`
+	PlatformAdminSeedFullName   string `env:"PLATFORM_ADMIN_FULL_NAME" envDefault:"Platform Admin"`
 }
 
 func (c Config) CORSOriginList() []string {

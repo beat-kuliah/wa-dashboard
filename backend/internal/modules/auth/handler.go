@@ -4,16 +4,18 @@ import (
 	"net/http"
 
 	"github.com/beatfraps/wa-dashboard/backend/internal/shared/auth"
+	apperrors "github.com/beatfraps/wa-dashboard/backend/internal/shared/errors"
 	"github.com/beatfraps/wa-dashboard/backend/internal/shared/httpx"
 	"github.com/labstack/echo/v4"
 )
 
 type Handler struct {
-	svc *Service
+	svc                        *Service
+	publicRegistrationEnabled bool
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, publicRegistrationEnabled bool) *Handler {
+	return &Handler{svc: svc, publicRegistrationEnabled: publicRegistrationEnabled}
 }
 
 type registerRequest struct {
@@ -37,6 +39,9 @@ type logoutRequest struct {
 }
 
 func (h *Handler) Register(c echo.Context) error {
+	if !h.publicRegistrationEnabled {
+		return apperrors.Forbidden("public registration is disabled")
+	}
 	var req registerRequest
 	if err := httpx.BindAndValidate(c, &req); err != nil {
 		return err

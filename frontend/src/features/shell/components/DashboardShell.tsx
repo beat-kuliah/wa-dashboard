@@ -8,6 +8,7 @@ import {
   Megaphone,
   MessageSquare,
   Menu,
+  Settings,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -36,6 +37,7 @@ const navItems = [
   { href: ROUTES.broadcast, label: "Broadcasts", icon: Megaphone },
   { href: ROUTES.csInbox, label: "CS Inbox", icon: MessageSquare },
   { href: ROUTES.analytics, label: "Analytics", icon: BarChart3 },
+  { href: ROUTES.settings, label: "Settings", icon: Settings },
 ] as const;
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {

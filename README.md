@@ -28,6 +28,85 @@ wa-dashboard/
 - [Architecture](docs/wa-dashboard-architecture.md)
 - [API contract (frozen)](docs/api-contract.md) — shared agreement for backend and frontend
 
+## Roles & access model
+
+The platform has three layers of access. The first ("super admin") sits **above**
+all tenants and is the planned platform-operator role; the other two live **inside**
+a single tenant and are already implemented.
+
+| Role | Scope | Can do | Status |
+| --- | --- | --- | --- |
+| **Super admin** (platform operator) | All tenants | Provision tenants + their owner, suspend/oversee every tenant, cross-tenant support | Available |
+| **Admin / owner** (`admin`) | One tenant | Configure own tenant (`PATCH /tenant`), manage members, full feature access | Available |
+| **Supervisor** (`supervisor`) | One tenant | View members, manage broadcasts, view all conversations | Available |
+| **Agent** (`agent`) | One tenant | Handle assigned conversations only | Available |
+
+Key rule: a tenant is **always resolved from the JWT `tid` claim**, never from the
+request body or path — so a tenant admin can only ever touch their own tenant. The
+super admin role is intentionally kept **outside** this tenant model (separate auth)
+so tenant isolation is never weakened.
+
+## Onboarding & auth flows
+
+### Today (self-service via API only)
+
+Tenants are created through the public `POST /auth/register` endpoint, which makes a
+new tenant **and** its first `admin` user in one transaction. There is **no register
+UI** — the only way to call it today is directly via API/curl. The web app exposes
+**login only**.
+
+```mermaid
+flowchart LR
+    Operator["Operator (via API/curl)"] -->|"POST /auth/register"| Owner["New tenant + admin/owner"]
+    Owner -->|"POST /tenant/members"| Members["supervisor / agent"]
+    Owner -->|"login"| Dashboard["Tenant dashboard"]
+    Members -->|"login"| Dashboard
+```
+
+### Target (provisioned by super admin)
+
+The chosen direction for this product is **provisioned onboarding**: the super admin
+creates the tenant + owner and hands credentials to the client. Public self-service
+registration stays disabled (or becomes an internal endpoint the super admin calls).
+This fits a paid B2B WhatsApp product where each tenant needs an assisted WhatsApp
+Business API connection.
+
+```mermaid
+flowchart LR
+    SuperAdmin["Super admin (operator panel)"] -->|"provision tenant + owner"| Owner["Tenant + admin/owner"]
+    SuperAdmin -->|"suspend / oversee"| AllTenants["All tenants"]
+    Owner -->|"POST /tenant/members"| Members["supervisor / agent"]
+    Owner -->|"login + PATCH /tenant"| Dashboard["Tenant dashboard"]
+    Members -->|"login"| Dashboard
+```
+
+### Login / session
+
+`POST /auth/login` returns a short-lived access token (JWT) plus an opaque refresh
+token. Clients call `POST /auth/refresh` to rotate the pair and `POST /auth/logout`
+to revoke. See the [API contract](docs/api-contract.md) for exact shapes.
+
+## Feature status
+
+What exists today versus what is planned. "Backend only" means the API works but
+there is no UI yet.
+
+| Capability | Backend | Frontend | Status |
+| --- | --- | --- | --- |
+| Auth: login / refresh / logout / me | Done | Login UI done | Available |
+| Tenant self-register (creates tenant + owner) | Done | No UI (API only) | Backend only |
+| Tenant settings (`GET`/`PATCH /tenant`) | Done | Settings UI | Available |
+| Member management (`list` / `add`) | Done | Settings UI | Available |
+| Broadcasts (list / create / get + worker) | Done | List UI | Available |
+| CS Inbox (conversations + SSE stream) | Stub | Page scaffolded | Coming soon |
+| Analytics summary | Stub | Page scaffolded | Coming soon |
+| WhatsApp message templates | Stub | No UI yet | Coming soon |
+| **Super admin** (platform operator) | Done | Admin console at `/admin` | Available |
+| **Provisioned onboarding** (super admin creates tenants) | Done | Provision form in admin console | Available |
+| Public register UI | Intentionally absent | Intentionally absent | Not planned |
+| WhatsApp Business API connection | Not started | Not started | Coming soon |
+| Per-tenant AI chatbot | Not started | Not started | Coming soon |
+
 ## Getting started
 
 Native PostgreSQL and Redis (no Docker required). Default URLs: API `http://localhost:8080`, frontend `http://localhost:3000`, REST base `http://localhost:8080/api/v1`.
@@ -119,7 +198,9 @@ With the API running and migrations applied:
 ```bash
 BASE=http://localhost:8080/api/v1
 
-# Register (creates tenant + admin user)
+# Register (creates tenant + admin/owner user).
+# This is the provisioning path today — there is no public register UI.
+# In the target model this call is made by the super admin, not end users.
 curl -sS -X POST "$BASE/auth/register" \
   -H 'Content-Type: application/json' \
   -d '{"email":"owner@example.com","password":"s3cr3tpassword","business_name":"Acme Inc.","full_name":"Jane Doe"}'
@@ -143,3 +224,16 @@ docker compose up -d postgres redis
 ```
 
 Then point `DATABASE_URL` and `REDIS_URL` in `backend/.env` at the compose services.
+
+### Platform admin smoke test
+
+With the API running, migrations applied, and `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`
+set in `backend/.env`:
+
+```bash
+chmod +x scripts/smoke-platform-admin.sh
+./scripts/smoke-platform-admin.sh
+```
+
+Open the operator console at [http://localhost:3000/admin/login](http://localhost:3000/admin/login)
+(tenant users sign in at `/login`).

@@ -106,6 +106,10 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, er
 		return nil, apperrors.Unauthorized("invalid credentials")
 	}
 
+	if err := s.ensureTenantActive(ctx, user.TenantID); err != nil {
+		return nil, err
+	}
+
 	tokens, err := s.issueTokens(ctx, user.ID, user.TenantID, user.Roles)
 	if err != nil {
 		return nil, err
@@ -138,6 +142,10 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokensDTO,
 	user, err := s.repo.GetUserByIDOnly(ctx, stored.UserID)
 	if err != nil {
 		return nil, apperrors.Unauthorized("invalid or revoked refresh token")
+	}
+
+	if err := s.ensureTenantActive(ctx, user.TenantID); err != nil {
+		return nil, err
 	}
 
 	tokens, err := s.issueTokens(ctx, user.ID, user.TenantID, user.Roles)
@@ -189,6 +197,20 @@ func (s *Service) issueTokens(ctx context.Context, userID, tenantID uuid.UUID, r
 		RefreshToken: raw,
 		ExpiresIn:    s.accessExpiry,
 	}, nil
+}
+
+func (s *Service) ensureTenantActive(ctx context.Context, tenantID uuid.UUID) error {
+	tenant, err := s.repo.GetTenantByID(ctx, tenantID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperrors.Unauthorized("invalid credentials")
+		}
+		return err
+	}
+	if tenant.Status == "suspended" {
+		return apperrors.TenantSuspended("")
+	}
+	return nil
 }
 
 func hashToken(raw string) string {
