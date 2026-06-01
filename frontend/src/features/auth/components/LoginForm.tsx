@@ -2,6 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import type { KeyboardEvent } from "react";
 import { useForm } from "react-hook-form";
 
 import { ROUTES } from "@/shared/config/constants";
@@ -28,7 +29,7 @@ export function LoginForm() {
     defaultValues: { email: "", password: "" },
   });
 
-  const onSubmit = handleSubmit(async (values) => {
+  const submit = handleSubmit(async (values) => {
     try {
       await loginMutation.mutateAsync(values);
       router.replace(ROUTES.broadcast);
@@ -36,6 +37,14 @@ export function LoginForm() {
       // Error surfaced via mutation state
     }
   });
+
+  const handleEnterSubmit = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  };
 
   const apiError =
     loginMutation.error instanceof ApiError
@@ -45,7 +54,7 @@ export function LoginForm() {
         : null;
 
   return (
-    <form onSubmit={onSubmit} className="space-y-5">
+    <form noValidate onSubmit={submit} className="space-y-5">
       {apiError ? (
         <Alert variant="destructive">
           <AlertDescription>{apiError}</AlertDescription>
@@ -60,6 +69,7 @@ export function LoginForm() {
           autoComplete="email"
           placeholder="you@company.com"
           {...register("email")}
+          onKeyDown={handleEnterSubmit}
         />
         {errors.email ? (
           <p className="text-sm text-destructive">{errors.email.message}</p>
@@ -74,6 +84,7 @@ export function LoginForm() {
           autoComplete="current-password"
           placeholder="••••••••"
           {...register("password")}
+          onKeyDown={handleEnterSubmit}
         />
         {errors.password ? (
           <p className="text-sm text-destructive">{errors.password.message}</p>
